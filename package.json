@@ -1,0 +1,13 @@
+{
+  "name": "md-to-gdoc-utility",
+  "version": "1.0.0",
+  "description": "Premium utility to copy styled Markdown and Mermaid diagrams directly into Google Docs and Confluence",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server -p 3000 -c-1 -o"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}

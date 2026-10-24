@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity Doc Porter — Markdown & Mermaid to Confluence / Google Docs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css?v=2.0">
+    <!-- marked for markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- mermaid for diagram rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <!-- highlight.js for premium code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo">
+                <div class="logo-icon"><i class="fa-solid fa-file-export"></i></div>
+                <div class="logo-text">
+                    <h1>Antigravity <span>Doc Porter</span></h1>
+                    <p>Frictionless MD & Mermaid to Google Docs & Confluence</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="theme-toggle" class="btn btn-secondary" title="Toggle Light/Dark Theme">
+                    <i class="fa-solid fa-moon"></i>
+                </button>
+                <button id="clear-btn" class="btn btn-danger" title="Clear Editor">
+                    <i class="fa-solid fa-trash-can"></i> Clear
+                </button>
+                <button id="load-sample" class="btn btn-secondary">
+                    <i class="fa-solid fa-file-lines"></i> Load Sample
+                </button>
+                <button id="pdf-btn" class="btn btn-secondary" title="Download as PDF">
+                    <i class="fa-solid fa-file-pdf"></i> Download PDF
+                </button>
+                <button id="copy-btn" class="btn btn-primary">
+                    <i class="fa-solid fa-copy"></i> Copy for Google Doc / Confluence
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="workspace">
+            <!-- Left Pane: Editor -->
+            <section class="pane editor-pane">
+                <div class="pane-header">
+                    <div class="pane-title-group">
+                        <span class="pane-title"><i class="fa-solid fa-pen-nib"></i> Markdown Editor</span>
+                        <span id="doc-stats" class="doc-stats">0 words</span>
+                    </div>
+                    <div class="editor-header-actions">
+                        <input type="file" id="file-input" accept=".md,.markdown,.txt" style="display: none;" />
+                        <button id="open-md-btn" class="btn-xs" title="Open a .md or .txt file (or drag & drop into editor)">
+                            <i class="fa-solid fa-folder-open"></i> Open .md
+                        </button>
+                        <button id="save-md-btn" class="btn-xs" title="Download current Markdown as .md file">
+                            <i class="fa-solid fa-download"></i> Save .md
+                        </button>
+                        <span id="autosave-badge" class="badge" title="Draft is automatically saved in browser storage">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Auto-Saved
+                        </span>
+                    </div>
+                </div>
+                <div class="editor-container" id="editor-drop-zone">
+                    <div id="drop-overlay" class="drop-overlay">
+                        <div class="drop-overlay-box">
+                            <i class="fa-solid fa-file-arrow-up"></i>
+                            <p>Drop your <strong>.md</strong> file here to load</p>
+                        </div>
+                    </div>
+                    <textarea id="markdown-input" placeholder="Type, paste, or drag & drop your Markdown (.md) file here...
+
+Use standard Markdown headers, tables, lists, YAML frontmatter, and create diagrams using:
+```mermaid
+graph TD
+    A[Start] --> B(Work)
+    B --> C{Success?}
+    C -->|Yes| D[Go to Google Docs!]
+    C -->|No| E[Debug code]
+```" spellcheck="false"></textarea>
+                </div>
+            </section>
+
+            <!-- Right Pane: Live Document Preview -->
+            <section class="pane preview-pane">
+                <div class="pane-header">
+                    <span class="pane-title"><i class="fa-solid fa-eye"></i> Live Document Preview</span>
+                    <div class="preview-actions">
+                        <span id="rendering-status" class="status-indicator"><i class="fa-solid fa-circle-check"></i> Synced</span>
+                    </div>
+                </div>
+                <div id="document-preview-container" class="preview-container">
+                    <div id="preview-content" class="preview-content">
+                        <!-- Rendered markdown goes here -->
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Hidden canvas for converting SVG to PNG -->
+    <canvas id="hidden-canvas" style="display: none;"></canvas>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+        <div class="toast-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <div class="toast-body">
+            <h4 id="toast-title">Success</h4>
+            <p id="toast-desc">Document copied to clipboard!</p>
+        </div>
+    </div>
+
+    <script src="app.js?v=2.1"></script>
+</body>
+</html>

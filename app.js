@@ -422,7 +422,7 @@ marked.use({
             if (typeof quoteObj === 'object' && quoteObj !== null) {
                 text = quoteObj.text || '';
                 if (!text && quoteObj.raw) {
-                    text = marked.parse(quoteObj.raw.replace(/^>\s?/gm, ''));
+                    text = quoteObj.raw.replace(/^>\s?/gm, '');
                 }
             } else {
                 text = quoteObj || '';
@@ -433,7 +433,8 @@ marked.use({
             
             if (match) {
                 const type = match[1].toUpperCase();
-                const content = match[2].trim().replace(/<\/p>\s*<p>/gi, '<br><br>').replace(/\n/g, '<br>');
+                const rawMarkdownBody = match[2].trim();
+                const parsedBody = marked.parse(rawMarkdownBody);
                 let icon = 'fa-info-circle';
                 let emoji = 'ℹ️';
                 
@@ -456,7 +457,7 @@ marked.use({
                         <div class="alert-title">
                             <i class="fa-solid ${icon}"></i> <span class="alert-title-text">${type}</span>
                         </div>
-                        <p class="alert-body">${content}</p>
+                        <div class="alert-body">${parsedBody}</div>
                     </div>
                 `;
             }
@@ -652,6 +653,7 @@ async function renderDocument() {
             const code = target.previousElementSibling.textContent;
             try {
                 const node = MathJax.tex2svg(code, { display: true });
+                node.querySelectorAll('mjx-assistive-mml').forEach(el => el.remove());
                 target.innerHTML = '';
                 target.appendChild(node);
             } catch (error) {
@@ -670,6 +672,7 @@ async function renderDocument() {
             const code = target.previousElementSibling.textContent;
             try {
                 const node = MathJax.tex2svg(code, { display: false });
+                node.querySelectorAll('mjx-assistive-mml').forEach(el => el.remove());
                 target.innerHTML = '';
                 target.appendChild(node);
             } catch (error) {
@@ -1173,13 +1176,24 @@ copyBtn.addEventListener('click', async () => {
                 emoji = '🛑';
             }
 
-            const bodyEl = el.querySelector('.alert-body') || el.querySelector('p');
+            const bodyEl = el.querySelector('.alert-body') || el;
+            const pEls = bodyEl.querySelectorAll('p');
+            if (pEls.length > 0) {
+                pEls.forEach((p, idx) => {
+                    const isLast = idx === pEls.length - 1;
+                    p.setAttribute(
+                        'style',
+                        `margin: 0pt; margin-top: 0pt; margin-bottom: ${isLast ? '0pt' : '4pt'}; padding: 0pt; line-height: 1.35; font-family: Arial, sans-serif; font-size: 10pt; color: ${txtColor};`
+                    );
+                });
+            }
+
             const bodyHtml = bodyEl ? bodyEl.innerHTML : '';
 
             const boxTable = document.createElement('table');
             boxTable.className = 'gdoc-box-table';
             boxTable.setAttribute('style', 'border-collapse: collapse; width: 100%; margin-top: 6pt; margin-bottom: 8pt;');
-            boxTable.innerHTML = `<tbody><tr><td style="background-color: ${bgColor}; border-top: 1pt solid ${borderColor}; border-right: 1pt solid ${borderColor}; border-bottom: 1pt solid ${borderColor}; border-left: 4pt solid ${color}; padding: 8pt 12pt; vertical-align: top;"><p style="margin: 0pt; margin-top: 0pt; margin-bottom: 3pt; padding: 0pt; line-height: 1.2; font-family: Arial, sans-serif; font-size: 10pt; font-weight: bold; color: ${color};">${emoji}\u00A0${type}</p><p style="margin: 0pt; margin-top: 0pt; margin-bottom: 0pt; padding: 0pt; line-height: 1.35; font-family: Arial, sans-serif; font-size: 10pt; color: ${txtColor};">${bodyHtml}</p></td></tr></tbody>`;
+            boxTable.innerHTML = `<tbody><tr><td style="background-color: ${bgColor}; border-top: 1pt solid ${borderColor}; border-right: 1pt solid ${borderColor}; border-bottom: 1pt solid ${borderColor}; border-left: 4pt solid ${color}; padding: 8pt 12pt; vertical-align: top;"><p style="margin: 0pt; margin-top: 0pt; margin-bottom: 4pt; padding: 0pt; line-height: 1.2; font-family: Arial, sans-serif; font-size: 10pt; font-weight: bold; color: ${color};">${emoji}\u00A0${type}</p><div style="margin: 0pt; padding: 0pt; line-height: 1.35; font-family: Arial, sans-serif; font-size: 10pt; color: ${txtColor};">${bodyHtml}</div></td></tr></tbody>`;
             el.parentNode.replaceChild(boxTable, el);
         });
 

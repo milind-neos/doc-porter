@@ -545,9 +545,20 @@ body.light-theme textarea#markdown-input {
     font-family: var(--font-body);
 }
 
-.preview-content .alert-block p {
-    margin-bottom: 0;
+.preview-content .alert-body {
     font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.preview-content .alert-body p {
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.preview-content .alert-body p:last-child {
+    margin-bottom: 0;
 }
 
 .preview-content .alert-title {
@@ -680,6 +691,16 @@ body.light-theme textarea#markdown-input {
     outline: none !important;
     display: inline-flex !important;
     vertical-align: middle !important;
+}
+
+/* Suppress assistive MathML duplicate text across preview and prints */
+mjx-assistive-mml {
+    display: none !important;
+    position: absolute !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
 }
 
 .math-error {
@@ -889,5 +910,10 @@ body.light-theme textarea#markdown-input {
     .alert-block {
         page-break-inside: avoid;
         break-inside: avoid;
+    }
+
+    mjx-assistive-mml {
+        display: none !important;
+        visibility: hidden !important;
     }
 }

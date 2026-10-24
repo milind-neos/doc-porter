@@ -19,6 +19,9 @@
     <!-- MathJax for LaTeX / Math formula rendering -->
     <script>
         window.MathJax = {
+            options: {
+                enableAssistiveMml: false
+            },
             tex: {
                 inlineMath: [['$', '$'], ['\\(', '\\)']],
                 displayMath: [['$$', '$$'], ['\\[', '\\]']],

@@ -30,6 +30,7 @@ const autosaveBadge = document.getElementById('autosave-badge');
 const STORAGE_KEY = 'ag_doc_porter_draft_v2';
 let renderTimeout;
 let diagramCounter = 0;
+let mathCounter = 0;
 
 // Sample Markdown Document
 const sampleMarkdown = `---
@@ -116,6 +117,20 @@ Below is a compact layout mapping out key data objects within our storage layer:
      "typ": "JWT"
    }
    \`\`\`
+
+---
+
+## 6. Mathematical Formulations & Scoring Models
+
+LaTeX formulas render as crisp vector elements in the preview and paste as 3x Retina PNG images into Google Docs & Confluence:
+
+### Formula Structure:
+
+$$
+\\text{Component Score } S_i \\in [0, 100] = \\min\\left(100, \\; \\sum (\\text{Mapped Metric} \\times \\text{Weight})\\right)
+$$
+
+Inline equations like $S_i \\in [0, 100]$ or $E = mc^2$ preserve proper baseline alignment across paragraphs, lists, and table cells!
 `;
 
 // Helper: Show Toast Notification
@@ -137,21 +152,40 @@ function showToast(title, message, isSuccess = true) {
 }
 
 // Convert SVG to high-res PNG Data URL using Canvas (3x Retina Scale)
-function svgToPng(svgElement) {
+function svgToPng(svgElement, options = {}) {
     return new Promise((resolve, reject) => {
         try {
             const bbox = svgElement.getBoundingClientRect();
-            const width = Math.round(bbox.width || svgElement.viewBox?.baseVal?.width || 400);
-            const height = Math.round(bbox.height || svgElement.viewBox?.baseVal?.height || 300);
+            let width = Math.round(bbox.width);
+            let height = Math.round(bbox.height);
+
+            // Compute fallback dimensions if element has 0 bbox (e.g. detached or hidden)
+            if (!width || !height) {
+                const vb = svgElement.viewBox?.baseVal;
+                if (vb && vb.width && vb.height) {
+                    const aspect = vb.width / vb.height;
+                    height = options.isInline ? 18 : 36;
+                    width = Math.round(height * aspect);
+                } else {
+                    width = 400;
+                    height = 50;
+                }
+            }
+
+            const clonedSvg = svgElement.cloneNode(true);
+            const isMath = !!svgElement.closest('.math-block-container, .math-inline-container') || svgElement.classList.contains('MathJax');
+            if (isMath) {
+                clonedSvg.style.color = '#0f172a';
+            }
 
             const serializer = new XMLSerializer();
-            let svgString = serializer.serializeToString(svgElement);
+            let svgString = serializer.serializeToString(clonedSvg);
             
             if (!svgString.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)) {
                 svgString = svgString.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
             }
 
-            const svgUrl = 'data:image/svg+xml;charset=utf-8;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+            const svgUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(svgString);
             const img = new Image();
 
             img.onload = function() {
@@ -162,8 +196,10 @@ function svgToPng(svgElement) {
                 const ctx = hiddenCanvas.getContext('2d');
                 ctx.clearRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
                 
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
+                if (!options.transparent) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
+                }
                 
                 ctx.scale(scale, scale);
                 ctx.drawImage(img, 0, 0, width, height);
@@ -221,22 +257,109 @@ function extractYamlFrontmatter(rawMarkdown) {
     return { frontmatterHtml, contentMarkdown };
 }
 
-// Update Document Statistics (Word Count & Diagram Count)
+// Update Document Statistics (Word Count & Diagram/Math Count)
 function updateDocumentStats(rawMarkdown) {
     if (!docStatsEl) return;
     const cleanText = rawMarkdown
         .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/\$\$[\s\S]*?\$\$/g, ' ')
         .replace(/[#>*_`~\-\[\]()!|]/g, ' ')
         .trim();
     const words = cleanText ? cleanText.split(/\s+/).length : 0;
     const mermaidCount = (rawMarkdown.match(/```mermaid\b/gi) || []).length;
-    docStatsEl.textContent = mermaidCount > 0
-        ? `${words} words • ${mermaidCount} diagram${mermaidCount > 1 ? 's' : ''}`
-        : `${words} words`;
+    const mathCount = (rawMarkdown.match(/\$\$[\s\S]*?\$\$/g) || []).length + (rawMarkdown.match(/```(math|latex|tex)\b/gi) || []).length;
+
+    const parts = [`${words} words`];
+    if (mermaidCount > 0) parts.push(`${mermaidCount} diagram${mermaidCount > 1 ? 's' : ''}`);
+    if (mathCount > 0) parts.push(`${mathCount} formula${mathCount > 1 ? 's' : ''}`);
+    docStatsEl.textContent = parts.join(' • ');
 }
 
-// Custom Renderer overrides to isolate and tag Mermaid Code Blocks and GitHub Alert Blocks
+// Tokenizer & Renderer Extensions for LaTeX Formulas
+const blockMathExtension = {
+    name: 'blockMath',
+    level: 'block',
+    start(src) {
+        const idx1 = src.indexOf('$$');
+        const idx2 = src.indexOf('\\[');
+        if (idx1 === -1) return idx2;
+        if (idx2 === -1) return idx1;
+        return Math.min(idx1, idx2);
+    },
+    tokenizer(src) {
+        let match = src.match(/^\$\$([\s\S]*?)\$\$/);
+        if (!match) {
+            match = src.match(/^\\\[([\s\S]*?)\\\]/);
+        }
+        if (match) {
+            mathCounter++;
+            const id = `math-block-${Date.now()}-${mathCounter}`;
+            return {
+                type: 'blockMath',
+                raw: match[0],
+                text: match[1].trim(),
+                id
+            };
+        }
+    },
+    renderer(token) {
+        return `
+            <div class="math-block-container" data-id="${token.id}">
+                <div class="diagram-toolbar math-toolbar" contenteditable="false">
+                    <button type="button" class="diagram-action-btn copy-math-btn" data-target-id="${token.id}" title="Copy formula as 3x Retina PNG for Google Docs">
+                        <i class="fa-solid fa-copy"></i> Copy PNG
+                    </button>
+                    <button type="button" class="diagram-action-btn download-math-btn" data-target-id="${token.id}" title="Download formula as 3x PNG">
+                        <i class="fa-solid fa-download"></i> PNG
+                    </button>
+                    <button type="button" class="diagram-action-btn copy-latex-btn" data-target-id="${token.id}" title="Copy raw LaTeX equation">
+                        <i class="fa-solid fa-code"></i> TeX
+                    </button>
+                </div>
+                <pre class="math-code-raw" style="display:none;">${token.text}</pre>
+                <div class="math-render-target" id="${token.id}">Rendering equation...</div>
+            </div>
+        `;
+    }
+};
+
+const inlineMathExtension = {
+    name: 'inlineMath',
+    level: 'inline',
+    start(src) {
+        let index = src.indexOf('$');
+        while (index !== -1) {
+            if (src[index + 1] !== '$' && (index === 0 || src[index - 1] !== '\\')) {
+                return index;
+            }
+            index = src.indexOf('$', index + 1);
+        }
+        return src.indexOf('\\(');
+    },
+    tokenizer(src) {
+        let match = src.match(/^\$([^\s\$](?:\\\$|[^\$\n])*?[^\s\$]|[^\s\$])\$/);
+        if (!match) {
+            match = src.match(/^\\\(([\s\S]*?)\\\)/);
+        }
+        if (match) {
+            mathCounter++;
+            const id = `math-inline-${Date.now()}-${mathCounter}`;
+            return {
+                type: 'inlineMath',
+                raw: match[0],
+                text: match[1].trim(),
+                id
+            };
+        }
+    },
+    renderer(token) {
+        return `<span class="math-inline-container" data-id="${token.id}"><span class="math-code-raw" style="display:none;">${token.text}</span><span class="math-inline-render-target" id="${token.id}">$${token.text}$</span></span>`;
+    }
+};
+
+// Custom Renderer overrides to isolate and tag Mermaid Code Blocks, Math Blocks, and GitHub Alert Blocks
 marked.use({
+    extensions: [blockMathExtension, inlineMathExtension],
     renderer: {
         code(codeObj, lang) {
             let text = '';
@@ -266,6 +389,28 @@ marked.use({
                         </div>
                         <pre class="mermaid-code-raw" style="display:none;">${text}</pre>
                         <div class="mermaid-render-target" id="${id}">Rendering diagram...</div>
+                    </div>
+                `;
+            }
+
+            if (['math', 'latex', 'tex'].includes(language.toLowerCase())) {
+                mathCounter++;
+                const id = `math-block-${Date.now()}-${mathCounter}`;
+                return `
+                    <div class="math-block-container" data-id="${id}">
+                        <div class="diagram-toolbar math-toolbar" contenteditable="false">
+                            <button type="button" class="diagram-action-btn copy-math-btn" data-target-id="${id}" title="Copy formula as 3x Retina PNG for Google Docs">
+                                <i class="fa-solid fa-copy"></i> Copy PNG
+                            </button>
+                            <button type="button" class="diagram-action-btn download-math-btn" data-target-id="${id}" title="Download formula as 3x PNG">
+                                <i class="fa-solid fa-download"></i> PNG
+                            </button>
+                            <button type="button" class="diagram-action-btn copy-latex-btn" data-target-id="${id}" title="Copy raw LaTeX equation">
+                                <i class="fa-solid fa-code"></i> TeX
+                            </button>
+                        </div>
+                        <pre class="math-code-raw" style="display:none;">${text}</pre>
+                        <div class="math-render-target" id="${id}">Rendering equation...</div>
                     </div>
                 `;
             }
@@ -380,6 +525,82 @@ function bindDiagramToolbarEvents() {
             }
         });
     });
+
+    // Bind Per-Math-Formula Actions
+    previewContent.querySelectorAll('.copy-math-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const targetId = btn.getAttribute('data-target-id');
+            const svgEl = previewContent.querySelector(`#${targetId} svg`);
+            if (!svgEl) {
+                showToast('Equation Not Ready', 'Wait for the equation to finish rendering.', false);
+                return;
+            }
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Copying...';
+            btn.disabled = true;
+            try {
+                const { pngDataUrl } = await svgToPng(svgEl, { transparent: false });
+                const res = await fetch(pngDataUrl);
+                const pngBlob = await res.blob();
+                await navigator.clipboard.write([
+                    new ClipboardItem({ 'image/png': pngBlob })
+                ]);
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+                showToast('Formula Copied!', 'Paste (Ctrl+V) the 3x PNG directly into Google Docs or Slides.');
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }, 1800);
+            } catch (err) {
+                console.error('Failed to copy formula PNG:', err);
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                showToast('Copy Failed', 'Could not copy PNG image to clipboard.', false);
+            }
+        });
+    });
+
+    previewContent.querySelectorAll('.download-math-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const targetId = btn.getAttribute('data-target-id');
+            const svgEl = previewContent.querySelector(`#${targetId} svg`);
+            if (!svgEl) return;
+
+            try {
+                const { pngDataUrl } = await svgToPng(svgEl, { transparent: false });
+                const link = document.createElement('a');
+                link.download = `formula-${targetId}.png`;
+                link.href = pngDataUrl;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast('PNG Downloaded', 'Saved formula at 3x Retina resolution.');
+            } catch (err) {
+                console.error('Failed to download formula PNG:', err);
+                showToast('Download Failed', 'Could not export formula PNG.', false);
+            }
+        });
+    });
+
+    previewContent.querySelectorAll('.copy-latex-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const targetId = btn.getAttribute('data-target-id');
+            const container = previewContent.querySelector(`.math-block-container[data-id="${targetId}"]`);
+            const rawCode = container?.querySelector('.math-code-raw')?.textContent || '';
+            if (!rawCode) return;
+
+            try {
+                await navigator.clipboard.writeText(rawCode);
+                showToast('LaTeX Copied!', 'Formula source code copied to clipboard.');
+            } catch (err) {
+                console.error('Failed to copy LaTeX:', err);
+                showToast('Copy Failed', 'Could not copy LaTeX to clipboard.', false);
+            }
+        });
+    });
 }
 
 // Live Compilation of Markdown and Diagrams
@@ -388,6 +609,7 @@ async function renderDocument() {
     statusIndicator.style.color = 'var(--text-secondary)';
     
     diagramCounter = 0;
+    mathCounter = 0;
     const rawMarkdown = markdownInput.value;
     updateDocumentStats(rawMarkdown);
     
@@ -419,6 +641,41 @@ async function renderDocument() {
                 </div>
             `;
             try { mermaid.parseError(); } catch(e) {}
+        }
+    }
+
+    // Render MathJax LaTeX equations
+    if (window.MathJax && MathJax.tex2svg) {
+        // Block equations
+        const blockTargets = previewContent.querySelectorAll('.math-render-target');
+        for (const target of blockTargets) {
+            const code = target.previousElementSibling.textContent;
+            try {
+                const node = MathJax.tex2svg(code, { display: true });
+                target.innerHTML = '';
+                target.appendChild(node);
+            } catch (error) {
+                console.error('MathJax block render error:', error);
+                target.innerHTML = `
+                    <div class="math-error">
+                        <strong>⚠️ LaTeX Formula Error:</strong> ${error.message || error}
+                    </div>
+                `;
+            }
+        }
+
+        // Inline equations
+        const inlineTargets = previewContent.querySelectorAll('.math-inline-render-target');
+        for (const target of inlineTargets) {
+            const code = target.previousElementSibling.textContent;
+            try {
+                const node = MathJax.tex2svg(code, { display: false });
+                target.innerHTML = '';
+                target.appendChild(node);
+            } catch (error) {
+                console.error('MathJax inline render error:', error);
+                target.textContent = `$${code}$`;
+            }
         }
     }
 
@@ -989,6 +1246,72 @@ copyBtn.addEventListener('click', async () => {
             }
         }
 
+        // Search for all rendered MathJax block formulas and rasterize them to 3x PNG images for Google Docs
+        const mathBlockWrappers = offlineRoot.querySelectorAll('.math-block-container');
+        for (const wrapper of mathBlockWrappers) {
+            const liveId = wrapper.getAttribute('data-id');
+            const liveSvgElement = previewContent.querySelector(`[data-id="${liveId}"] svg`);
+            const rawCode = wrapper.querySelector('.math-code-raw')?.textContent || 'Formula';
+            const escapedAlt = rawCode.replace(/"/g, '&quot;');
+            
+            if (liveSvgElement) {
+                try {
+                    const { pngDataUrl, width, height } = await svgToPng(liveSvgElement, { transparent: false });
+                    wrapper.outerHTML = `
+                        <table class="gdoc-math-table" style="border-collapse: collapse; width: 100%; margin: 8pt 0; border: none;">
+                            <tbody>
+                                <tr>
+                                    <td align="center" style="border: none; padding: 4pt 0; text-align: center; vertical-align: middle;">
+                                        <p style="margin: 0pt; padding: 0pt; text-align: center;">
+                                            <img class="rendered-math-block" src="${pngDataUrl}" width="${width}" height="${height}" alt="${escapedAlt}" style="display: block; margin: 0 auto; max-width: 100%; height: auto;" />
+                                        </p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    `;
+                } catch (err) {
+                    console.error('Error rasterizing block math to PNG:', err);
+                    wrapper.innerHTML = `<p style="color:red; font-weight:bold;">[Formula Rasterization Error]</p>`;
+                }
+            }
+        }
+
+        // Search for all rendered MathJax inline formulas and rasterize them to 3x PNG images
+        const mathInlineWrappers = offlineRoot.querySelectorAll('.math-inline-container');
+        for (const wrapper of mathInlineWrappers) {
+            const liveId = wrapper.getAttribute('data-id');
+            const liveSvgElement = previewContent.querySelector(`[data-id="${liveId}"] svg`);
+            const rawCode = wrapper.querySelector('.math-code-raw')?.textContent || 'Equation';
+            const escapedAlt = rawCode.replace(/"/g, '&quot;');
+            
+            if (liveSvgElement) {
+                try {
+                    const { pngDataUrl, width, height } = await svgToPng(liveSvgElement, { transparent: true, isInline: true });
+                    
+                    const prev = wrapper.previousSibling;
+                    if (prev && prev.nodeType === Node.TEXT_NODE && /[ \t\r\n]+$/.test(prev.nodeValue)) {
+                        prev.nodeValue = prev.nodeValue.replace(/[ \t\r\n]+$/, '\u00A0');
+                    }
+                    const next = wrapper.nextSibling;
+                    if (next && next.nodeType === Node.TEXT_NODE && /^[ \t\r\n]+/.test(next.nodeValue)) {
+                        next.nodeValue = next.nodeValue.replace(/^[ \t\r\n]+/, '\u00A0');
+                    }
+
+                    const img = document.createElement('img');
+                    img.className = 'rendered-math-inline';
+                    img.src = pngDataUrl;
+                    img.width = width;
+                    img.height = height;
+                    img.alt = escapedAlt;
+                    img.setAttribute('style', 'display: inline-block; vertical-align: middle; max-height: 1.45em; width: auto;');
+                    wrapper.parentNode.replaceChild(img, wrapper);
+                } catch (err) {
+                    console.error('Error rasterizing inline math to PNG:', err);
+                }
+            }
+        }
+
         // Bundle elements into clean HTML structure and compact it
         const finalHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${offlineRoot.innerHTML}</body></html>`;
         
@@ -1038,4 +1361,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedDraft = localStorage.getItem(STORAGE_KEY);
     markdownInput.value = (savedDraft !== null && savedDraft.trim() !== '') ? savedDraft : sampleMarkdown;
     renderDocument();
+
+    // Re-render when MathJax finishes loading if not already ready
+    if (window.MathJax && MathJax.startup && MathJax.startup.promise) {
+        MathJax.startup.promise.then(() => {
+            renderDocument();
+        });
+    }
 });

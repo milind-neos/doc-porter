@@ -628,9 +628,69 @@ body.light-theme textarea#markdown-input {
     z-index: 5;
 }
 
-.mermaid-diagram-container:hover .diagram-toolbar {
+.mermaid-diagram-container:hover .diagram-toolbar,
+.math-block-container:hover .diagram-toolbar {
     opacity: 1;
     transform: translateY(0);
+}
+
+/* Math Block & Inline Equation Styles */
+.math-block-container {
+    position: relative;
+    text-align: center;
+    margin: 24px 0;
+    padding: 22px 18px 18px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: var(--radius-md);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+    transition: var(--transition);
+    overflow-x: auto;
+}
+
+.math-block-container:hover {
+    border-color: #cbd5e1;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+}
+
+.math-render-target {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow-x: auto;
+    min-height: 36px;
+    color: var(--text-preview);
+}
+
+.math-render-target mjx-container {
+    margin: 0 !important;
+    outline: none !important;
+}
+
+.math-inline-container {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    padding: 0 2px;
+    color: var(--text-preview);
+}
+
+.math-inline-container mjx-container {
+    margin: 0 !important;
+    outline: none !important;
+    display: inline-flex !important;
+    vertical-align: middle !important;
+}
+
+.math-error {
+    color: var(--danger);
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px dashed var(--danger);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    display: inline-block;
+    text-align: left;
 }
 
 .diagram-action-btn {
@@ -798,6 +858,16 @@ body.light-theme textarea#markdown-input {
         background: #ffffff !important;
         margin: 20px 0 !important;
         padding: 10px !important;
+    }
+
+    .math-block-container {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        box-shadow: none !important;
+        border: 1px solid #cbd5e1 !important;
+        background: #ffffff !important;
+        margin: 16px 0 !important;
+        padding: 12px 10px !important;
     }
     
     pre, blockquote, table, tr, img {

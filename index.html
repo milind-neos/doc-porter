@@ -16,6 +16,29 @@
     <!-- highlight.js for premium code syntax highlighting -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- MathJax for LaTeX / Math formula rendering -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true
+            },
+            svg: {
+                fontCache: 'local'
+            },
+            startup: {
+                typeset: false,
+                ready: () => {
+                    MathJax.startup.defaultReady();
+                    if (typeof renderDocument === 'function') {
+                        renderDocument();
+                    }
+                }
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
 <body class="dark-theme">
     <div class="app-container">
@@ -78,7 +101,12 @@
                     </div>
                     <textarea id="markdown-input" placeholder="Type, paste, or drag & drop your Markdown (.md) file here...
 
-Use standard Markdown headers, tables, lists, YAML frontmatter, and create diagrams using:
+Supports Markdown tables, task lists, YAML frontmatter, GitHub alerts, LaTeX math formulas:
+$$
+\text{Component Score } S_i \in [0, 100] = \min\left(100, \; \sum (\text{Mapped Metric} \times \text{Weight})\right)
+$$
+
+And Mermaid diagrams:
 ```mermaid
 graph TD
     A[Start] --> B(Work)

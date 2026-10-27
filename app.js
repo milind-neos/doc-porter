@@ -842,8 +842,12 @@ function convertCodeDomForGoogleDocs(rootNode) {
                 frag.appendChild(document.createElement('br'));
             }
             if (line.length > 0) {
-                // Convert tabs to 4 non-breaking spaces and ASCII spaces to \u00A0 so Google Docs never collapses code spaces
-                const preserved = line.replace(/\t/g, '\u00A0\u00A0\u00A0\u00A0').replace(/ /g, '\u00A0');
+                // Convert tabs to 4 non-breaking spaces, leading spaces to \u00A0, and runs of 2+ spaces to \u00A0
+                // while keeping single spaces between tokens breakable so long lines wrap cleanly without stretching boxes
+                const withTabs = line.replace(/\t/g, '\u00A0\u00A0\u00A0\u00A0');
+                const preserved = withTabs
+                    .replace(/^ +/, m => '\u00A0'.repeat(m.length))
+                    .replace(/ {2,}/g, m => '\u00A0'.repeat(m.length));
                 frag.appendChild(document.createTextNode(preserved));
             }
         });
@@ -895,97 +899,6 @@ copyBtn.addEventListener('click', async () => {
             }
         });
 
-        // Split lists (ol or ul) containing pre elements into multiple list segments separated by code blocks
-        offlineRoot.querySelectorAll('ol, ul').forEach(list => {
-            if (!list.querySelector('pre')) return;
-            
-            const isOrdered = list.tagName.toLowerCase() === 'ol';
-            const parent = list.parentNode;
-            
-            const fragment = document.createDocumentFragment();
-            let currentList = document.createElement(list.tagName);
-            
-            if (list.getAttribute('style')) {
-                currentList.setAttribute('style', list.getAttribute('style'));
-            }
-            fragment.appendChild(currentList);
-            
-            let itemIndex = 1;
-            
-            list.querySelectorAll(':scope > li').forEach(li => {
-                const liChildren = Array.from(li.childNodes);
-                const liHasPre = li.querySelector('pre');
-                
-                if (!liHasPre) {
-                    const clonedLi = li.cloneNode(true);
-                    currentList.appendChild(clonedLi);
-                    itemIndex++;
-                } else {
-                    const textLi = document.createElement('li');
-                    if (li.getAttribute('style')) {
-                        textLi.setAttribute('style', li.getAttribute('style'));
-                    }
-                    
-                    const preElements = [];
-                    liChildren.forEach(child => {
-                        if (child.nodeName.toLowerCase() === 'pre') {
-                            preElements.push(child);
-                        } else if (preElements.length === 0) {
-                            textLi.appendChild(child.cloneNode(true));
-                        }
-                    });
-                    
-                    currentList.appendChild(textLi);
-                    itemIndex++;
-                    
-                    preElements.forEach(pre => {
-                        const codeBlock = pre.cloneNode(true);
-                        codeBlock.setAttribute('data-list-indent', 'true');
-                        fragment.appendChild(codeBlock);
-                    });
-                    
-                    currentList = document.createElement(list.tagName);
-                    if (list.getAttribute('style')) {
-                        currentList.setAttribute('style', list.getAttribute('style'));
-                    }
-                    if (isOrdered) {
-                        currentList.setAttribute('start', itemIndex);
-                    }
-                    fragment.appendChild(currentList);
-                    
-                    const trailingNodes = [];
-                    let afterPre = false;
-                    liChildren.forEach(child => {
-                        if (child.nodeName.toLowerCase() === 'pre') {
-                            afterPre = true;
-                        } else if (afterPre) {
-                            trailingNodes.push(child);
-                        }
-                    });
-                    
-                    if (trailingNodes.length > 0 && trailingNodes.some(n => n.textContent.trim() !== '')) {
-                        const trailingLi = document.createElement('li');
-                        if (li.getAttribute('style')) {
-                            trailingLi.setAttribute('style', li.getAttribute('style'));
-                        }
-                        trailingNodes.forEach(node => {
-                            trailingLi.appendChild(node.cloneNode(true));
-                        });
-                        currentList.appendChild(trailingLi);
-                        itemIndex++;
-                    }
-                }
-            });
-            
-            Array.from(fragment.childNodes).forEach(node => {
-                if ((node.tagName.toLowerCase() === 'ol' || node.tagName.toLowerCase() === 'ul') && node.childNodes.length === 0) {
-                    fragment.removeChild(node);
-                }
-            });
-            
-            parent.replaceChild(fragment, list);
-        });
-        
         // Helper: Programmatically inline styling on cloned offline nodes
         const inlineStyles = (selector, styleString) => {
             offlineRoot.querySelectorAll(selector).forEach(el => {
@@ -999,12 +912,14 @@ copyBtn.addEventListener('click', async () => {
         inlineStyles('h2', 'font-family: Arial, sans-serif; font-size: 16pt; font-weight: bold; color: #0f172a; margin-top: 14pt; margin-bottom: 5pt; border-bottom: 1pt solid #e2e8f0; padding-bottom: 3pt;');
         inlineStyles('h3', 'font-family: Arial, sans-serif; font-size: 13pt; font-weight: bold; color: #1e293b; margin-top: 12pt; margin-bottom: 4pt;');
         inlineStyles('h4', 'font-family: Arial, sans-serif; font-size: 11.5pt; font-weight: bold; color: #1e293b; margin-top: 10pt; margin-bottom: 3pt;');
-        inlineStyles('p', 'font-family: Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #334155; margin-top: 0pt; margin-bottom: 8pt;');
-        inlineStyles('li', 'font-family: Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #334155; margin-top: 0pt; margin-bottom: 3pt;');
+        inlineStyles('p', 'font-family: Arial, sans-serif; font-size: 10.5pt; font-weight: normal; line-height: 1.45; color: #334155; margin-top: 0pt; margin-bottom: 8pt;');
+        inlineStyles('li', 'font-family: Arial, sans-serif; font-size: 10.5pt; font-weight: normal; line-height: 1.45; color: #334155; margin-top: 0pt; margin-bottom: 3pt;');
         inlineStyles('ul', 'margin-top: 2pt; margin-bottom: 8pt; padding-left: 20pt; list-style-type: disc;');
         inlineStyles('ol', 'margin-top: 2pt; margin-bottom: 8pt; padding-left: 20pt; list-style-type: decimal;');
         
         // Inline GitHub-light-style syntax highlighting colors before converting <pre> blocks
+        inlineStyles('strong, b', 'font-weight: bold;');
+        inlineStyles('pre span', 'font-family: "Courier New", Courier, monospace; font-size: 8.5pt;');
         inlineStyles('.hljs-keyword', 'color: #cf222e; font-weight: bold;');
         inlineStyles('.hljs-string', 'color: #0a3069;');
         inlineStyles('.hljs-comment', 'color: #6e7781; font-style: italic;');
@@ -1017,24 +932,23 @@ copyBtn.addEventListener('click', async () => {
         inlineStyles('.hljs-attr', 'color: #116329;');
         inlineStyles('.hljs-title', 'color: #8250df; font-weight: bold;');
 
-        // BUG #1 FIX (Part B): Lock spaces around and inside inline `code` elements using non-breaking spaces (\u00A0)
-        // and convert to styled inline spans so Google Docs never drops boundary spaces when switching fonts!
+        // Keep inline `code` elements in Arial for Google Docs while preserving boundary spaces cleanly
         offlineRoot.querySelectorAll('code:not(pre code)').forEach(codeEl => {
             const prev = codeEl.previousSibling;
             if (prev && prev.nodeType === Node.TEXT_NODE && /[ \t\r\n]+$/.test(prev.nodeValue)) {
-                prev.nodeValue = prev.nodeValue.replace(/[ \t\r\n]+$/, '\u00A0');
+                prev.nodeValue = prev.nodeValue.replace(/[ \t\r\n]+$/, ' ');
             }
             const next = codeEl.nextSibling;
             if (next && next.nodeType === Node.TEXT_NODE && /^[ \t\r\n]+/.test(next.nodeValue)) {
-                next.nodeValue = next.nodeValue.replace(/^[ \t\r\n]+/, '\u00A0');
+                next.nodeValue = next.nodeValue.replace(/^[ \t\r\n]+/, ' ');
             }
 
             const span = document.createElement('span');
             span.setAttribute(
                 'style',
-                'background-color: #f1f5f9; color: #cf222e; font-family: "Courier New", Courier, monospace; font-size: 9.5pt; padding: 1pt 3pt; border-radius: 3pt;'
+                'background-color: #f1f5f9; color: #cf222e; font-family: Arial, sans-serif; padding: 1pt 3pt; border-radius: 3pt;'
             );
-            // Keep internal spaces breakable so long inline code spans wrap naturally inside table cells
+            // Keep internal spaces breakable so long inline code spans wrap naturally inside table cells and lists
             span.textContent = codeEl.textContent || '';
             codeEl.parentNode.replaceChild(span, codeEl);
         });
@@ -1107,7 +1021,7 @@ copyBtn.addEventListener('click', async () => {
             const isHeader = cell.tagName.toLowerCase() === 'th';
             const isFmKey = cell.classList.contains('fm-key');
             const bg = (isHeader || isFmKey) ? 'background-color: #f1f5f9;' : '';
-            const fw = (isHeader || isFmKey) ? 'font-weight: bold;' : '';
+            const fw = (isHeader || isFmKey) ? 'font-weight: bold;' : 'font-weight: normal;';
             const colPct = cell.getAttribute('data-col-pct');
             const widthRule = isFmKey
                 ? 'width: 120pt;'
@@ -1197,44 +1111,51 @@ copyBtn.addEventListener('click', async () => {
             el.parentNode.replaceChild(boxTable, el);
         });
 
-        // 1x1 Table-Backed Code Blocks (<pre>) so Google Docs renders a real bordered, shaded container box
+        // Code Blocks (<pre>): Inside lists, use list-native pre blocks so Google Docs indents them aligned under subpoints;
+        // at top-level, use 1x1 table boxes for crisp container borders.
         offlineRoot.querySelectorAll('pre').forEach(pre => {
-            if (pre.classList.contains('mermaid-code-raw')) return;
+            if (pre.classList.contains('mermaid-code-raw') || pre.classList.contains('math-code-raw')) return;
 
-            const isListIndented = pre.getAttribute('data-list-indent') === 'true';
             const codeEl = pre.querySelector('code') || pre;
             convertCodeDomForGoogleDocs(codeEl);
 
-            const codeBoxTable = document.createElement('table');
-            codeBoxTable.className = 'gdoc-box-table';
-            const indentStyle = isListIndented
-                ? 'margin-left: 24pt; width: calc(100% - 24pt); margin-top: 4pt; margin-bottom: 6pt;'
-                : 'width: 100%; margin-top: 6pt; margin-bottom: 8pt;';
-            codeBoxTable.setAttribute('style', `border-collapse: collapse; ${indentStyle}`);
+            const isInsideList = !!pre.closest('li');
+            if (isInsideList) {
+                const codeBox = document.createElement('pre');
+                codeBox.setAttribute(
+                    'style',
+                    'background-color: #f6f8fa; border: 1pt solid #d0d7de; border-radius: 3pt; padding: 6pt 8pt; margin-top: 4pt; margin-bottom: 6pt; font-family: "Courier New", Courier, monospace; font-size: 8.5pt; line-height: 1.25; color: #24292f; white-space: pre-wrap; word-break: break-word;'
+                );
+                codeBox.innerHTML = codeEl.innerHTML;
+                pre.parentNode.replaceChild(codeBox, pre);
+            } else {
+                const codeBoxTable = document.createElement('table');
+                codeBoxTable.className = 'gdoc-box-table';
+                codeBoxTable.setAttribute('style', 'border-collapse: collapse; width: 100%; table-layout: fixed; margin-top: 6pt; margin-bottom: 8pt;');
 
-            const tbody = document.createElement('tbody');
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.setAttribute(
-                'style',
-                'background-color: #f6f8fa; border: 1pt solid #d0d7de; padding: 8pt 10pt; font-family: "Courier New", Courier, monospace; font-size: 9.5pt; line-height: 1.3; color: #24292f; vertical-align: top;'
-            );
+                const tbody = document.createElement('tbody');
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.setAttribute(
+                    'style',
+                    'width: 100%; background-color: #f6f8fa; border: 1pt solid #d0d7de; padding: 6pt 8pt; font-family: "Courier New", Courier, monospace; font-size: 8.5pt; line-height: 1.25; color: #24292f; vertical-align: top; overflow-wrap: break-word;'
+                );
 
-            const p = document.createElement('p');
-            p.setAttribute(
-                'style',
-                'margin: 0pt; margin-top: 0pt; margin-bottom: 0pt; padding: 0pt; line-height: 1.3; font-family: "Courier New", Courier, monospace; font-size: 9.5pt; color: #24292f;'
-            );
-            p.innerHTML = codeEl.innerHTML;
+                const p = document.createElement('p');
+                p.setAttribute(
+                    'style',
+                    'margin: 0pt; margin-top: 0pt; margin-bottom: 0pt; padding: 0pt; line-height: 1.25; font-family: "Courier New", Courier, monospace; font-size: 8.5pt; color: #24292f;'
+                );
+                p.innerHTML = codeEl.innerHTML;
 
-            td.appendChild(p);
-            tr.appendChild(td);
-            tbody.appendChild(tr);
-            codeBoxTable.appendChild(tbody);
+                td.appendChild(p);
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                codeBoxTable.appendChild(tbody);
 
-            pre.parentNode.replaceChild(codeBoxTable, pre);
+                pre.parentNode.replaceChild(codeBoxTable, pre);
+            }
         });
-
         // Standard inline Quote styling
         inlineStyles('blockquote', 'border-left: 3pt solid #cbd5e1; background-color: #f8fafc; padding: 8pt 12pt; margin: 8pt 0; color: #475569; font-style: italic;');
 

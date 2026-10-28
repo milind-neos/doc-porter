@@ -10,6 +10,7 @@ mermaid.initialize({
 const markdownInput = document.getElementById('markdown-input');
 const previewContent = document.getElementById('preview-content');
 const copyBtn = document.getElementById('copy-btn');
+const docxBtn = document.getElementById('docx-btn');
 const pdfBtn = document.getElementById('pdf-btn');
 const clearBtn = document.getElementById('clear-btn');
 const loadSampleBtn = document.getElementById('load-sample');
@@ -1285,6 +1286,865 @@ copyBtn.addEventListener('click', async () => {
         copyBtn.innerHTML = '<i class="fa-solid fa-copy"></i> Copy for Google Doc / Confluence';
     }
 });
+
+
+// Helper: Convert Base64 PNG Data URL to Uint8Array for docx.ImageRun
+function dataUrlToUint8Array(dataUrl) {
+    const base64 = dataUrl.split(',')[1] || '';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+// Helper: Map Highlight.js classes to GitHub Light hex colors (without '#')
+function getHljsColorHex(el) {
+    if (!el || !el.classList) return null;
+    if (el.classList.contains('hljs-keyword')) return { color: 'CF222E', bold: true };
+    if (el.classList.contains('hljs-string')) return { color: '0A3069' };
+    if (el.classList.contains('hljs-comment')) return { color: '6E7781', italics: true };
+    if (el.classList.contains('hljs-number') || el.classList.contains('hljs-literal') || el.classList.contains('hljs-property')) return { color: '0550AE' };
+    if (el.classList.contains('hljs-built_in') || el.classList.contains('hljs-variable')) return { color: '953800' };
+    if (el.classList.contains('hljs-type')) return { color: '953800', bold: true };
+    if (el.classList.contains('hljs-attr')) return { color: '116329' };
+    if (el.classList.contains('hljs-title')) return { color: '8250DF', bold: true };
+    return null;
+}
+
+// Build OpenXML inline runs (TextRun, ExternalHyperlink, ImageRun) preserving parent font size and bold isolation
+function buildDocxInlineRuns(containerNode, ctx, imageMap) {
+    const { TextRun, ExternalHyperlink, ImageRun, ShadingType, UnderlineType } = window.docx;
+    const runs = [];
+
+    const childNodes = Array.from(containerNode.childNodes);
+    childNodes.forEach((node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            let text = node.nodeValue || '';
+            if (!text) return;
+            // Normalize internal whitespace while preserving single boundary spaces around inline tags
+            text = text.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ');
+            if (!text) return;
+
+            runs.push(new TextRun({
+                text,
+                font: ctx.font || 'Arial',
+                size: ctx.size || 21,
+                color: ctx.color || '334155',
+                bold: Boolean(ctx.bold),
+                italics: Boolean(ctx.italics),
+                strike: Boolean(ctx.strike),
+                underline: ctx.underline ? { type: UnderlineType.SINGLE, color: ctx.color || '2563EB' } : undefined
+            }));
+            return;
+        }
+
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const tag = node.tagName.toLowerCase();
+
+        if (tag === 'br') {
+            runs.push(new TextRun({ break: 1 }));
+            return;
+        }
+
+        if (tag === 'input' && node.getAttribute('type') === 'checkbox') {
+            runs.push(new TextRun({
+                text: node.checked ? '☑️ ' : '☐ ',
+                font: 'Segoe UI Symbol',
+                size: ctx.size || 21,
+                color: ctx.color || '334155',
+                bold: false
+            }));
+            return;
+        }
+
+        if (node.classList.contains('math-inline-container')) {
+            const mathId = node.getAttribute('data-id');
+            const imgData = imageMap.get(mathId);
+            if (imgData) {
+                runs.push(new ImageRun({
+                    data: imgData.uint8Array,
+                    transformation: {
+                        width: Math.max(12, Math.round(imgData.width)),
+                        height: Math.max(12, Math.round(imgData.height))
+                    }
+                }));
+            } else {
+                const rawTex = node.querySelector('.math-code-raw')?.textContent || node.textContent || '';
+                runs.push(new TextRun({
+                    text: rawTex,
+                    font: 'Cambria Math',
+                    size: ctx.size || 21,
+                    italics: true,
+                    color: ctx.color || '0F172A'
+                }));
+            }
+            return;
+        }
+
+        if (tag === 'code') {
+            const codeText = node.textContent || '';
+            // Inline code inherits parent ctx.size (e.g., 44 in H1 = 22pt, 19 in table = 9.5pt, 21 in body = 10.5pt)
+            runs.push(new TextRun({
+                text: codeText,
+                font: 'Arial',
+                size: ctx.size || 21,
+                color: 'CF222E',
+                bold: Boolean(ctx.bold),
+                italics: Boolean(ctx.italics),
+                shading: {
+                    type: ShadingType.CLEAR,
+                    color: 'auto',
+                    fill: 'F1F5F9'
+                }
+            }));
+            return;
+        }
+
+        if (tag === 'strong' || tag === 'b') {
+            runs.push(...buildDocxInlineRuns(node, { ...ctx, bold: true }, imageMap));
+            return;
+        }
+
+        if (tag === 'em' || tag === 'i') {
+            runs.push(...buildDocxInlineRuns(node, { ...ctx, italics: true }, imageMap));
+            return;
+        }
+
+        if (tag === 'del' || tag === 's') {
+            runs.push(...buildDocxInlineRuns(node, { ...ctx, strike: true }, imageMap));
+            return;
+        }
+
+        if (tag === 'a') {
+            const href = node.getAttribute('href') || '';
+            const linkRuns = buildDocxInlineRuns(node, { ...ctx, color: '2563EB', underline: true }, imageMap);
+            if (href && (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:'))) {
+                runs.push(new ExternalHyperlink({
+                    link: href,
+                    children: linkRuns
+                }));
+            } else {
+                runs.push(...linkRuns);
+            }
+            return;
+        }
+
+        // Default recursion for spans or other inline wrappers
+        runs.push(...buildDocxInlineRuns(node, ctx, imageMap));
+    });
+
+    return runs;
+}
+
+// Build syntax-highlighted code paragraphs inside a 1x1 bordered table (with optional list indentation)
+function buildDocxCodeBlockTable(preNode, indentDxa = 0) {
+    const { Table, TableRow, TableCell, Paragraph, TextRun, WidthType, BorderStyle, ShadingType } = window.docx;
+    const codeEl = preNode.querySelector('code') || preNode;
+
+    // Flatten code DOM into styled segments [{ text, color, bold, italics }]
+    const segments = [];
+    function collectCodeSegments(node, styleObj) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (node.nodeValue) {
+                segments.push({ text: node.nodeValue, ...styleObj });
+            }
+            return;
+        }
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            const hljsStyle = getHljsColorHex(node) || {};
+            const nextStyle = { ...styleObj, ...hljsStyle };
+            Array.from(node.childNodes).forEach(child => collectCodeSegments(child, nextStyle));
+        }
+    }
+    collectCodeSegments(codeEl, { color: '24292F', bold: false, italics: false });
+
+    // Split segments into lines on '\n'
+    const lines = [[]];
+    segments.forEach(seg => {
+        const parts = seg.text.replace(/\r\n/g, '\n').split('\n');
+        parts.forEach((part, idx) => {
+            if (idx > 0) {
+                lines.push([]);
+            }
+            if (part.length > 0) {
+                lines[lines.length - 1].push({
+                    text: part,
+                    color: seg.color,
+                    bold: seg.bold,
+                    italics: seg.italics
+                });
+            }
+        });
+    });
+
+    // Strip single trailing empty line if present
+    if (lines.length > 1 && lines[lines.length - 1].length === 0) {
+        lines.pop();
+    }
+
+    const codeParagraphs = lines.map((lineSegs) => {
+        if (lineSegs.length === 0) {
+            return new Paragraph({
+                spacing: { before: 0, after: 20, line: 260 },
+                children: [new TextRun({ text: '', font: 'Courier New', size: 17 })]
+            });
+        }
+        const lineRuns = lineSegs.map((seg, segIdx) => {
+            let formatted = seg.text.replace(/\t/g, '\u00A0\u00A0\u00A0\u00A0');
+            if (segIdx === 0) {
+                formatted = formatted.replace(/^ +/, m => '\u00A0'.repeat(m.length));
+            }
+            formatted = formatted.replace(/ {2,}/g, m => '\u00A0'.repeat(m.length));
+            return new TextRun({
+                text: formatted,
+                font: 'Courier New',
+                size: 17, // 8.5pt
+                color: seg.color || '24292F',
+                bold: Boolean(seg.bold),
+                italics: Boolean(seg.italics)
+            });
+        });
+        return new Paragraph({
+            spacing: { before: 0, after: 20, line: 260 },
+            children: lineRuns
+        });
+    });
+
+    const totalWidthDxa = Math.max(2880, 10080 - indentDxa);
+    const borderSpec = { style: BorderStyle.SINGLE, size: 6, color: 'D0D7DE' };
+
+    return new Table({
+        width: { size: totalWidthDxa, type: WidthType.DXA },
+        columnWidths: [totalWidthDxa],
+        indent: indentDxa > 0 ? { size: indentDxa, type: WidthType.DXA } : undefined,
+        rows: [
+            new TableRow({
+                children: [
+                    new TableCell({
+                        width: { size: totalWidthDxa, type: WidthType.DXA },
+                        shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F6F8FA' },
+                        margins: { top: 100, bottom: 100, left: 140, right: 140 },
+                        borders: {
+                            top: borderSpec,
+                            bottom: borderSpec,
+                            left: borderSpec,
+                            right: borderSpec
+                        },
+                        children: codeParagraphs
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+// Build OpenXML Table for Data Tables and YAML Frontmatter Tables
+function buildDocxDataTable(tableNode, liveTable, imageMap) {
+    const { Table, TableRow, TableCell, Paragraph, WidthType, BorderStyle, ShadingType, AlignmentType, VerticalAlign } = window.docx;
+    const totalTableDxa = 10080; // 7.0 inches
+
+    const rows = Array.from(tableNode.querySelectorAll('tr'));
+    if (rows.length === 0) return null;
+
+    const isFrontmatter = tableNode.classList.contains('frontmatter-table');
+    const colCount = Math.max(...rows.map(r => r.children.length), 1);
+
+    // Measure live column ratios from previewContent if available
+    let colWidthsDxa = [];
+    const liveFirstRow = liveTable ? liveTable.querySelector('tr') : null;
+    const liveTableWidth = liveTable ? liveTable.getBoundingClientRect().width : 0;
+
+    if (isFrontmatter && colCount === 2) {
+        colWidthsDxa = [2400, 7680];
+    } else if (liveFirstRow && liveTableWidth > 0 && liveFirstRow.children.length === colCount) {
+        const rawWidths = Array.from(liveFirstRow.children).map(c => Math.max(24, c.getBoundingClientRect().width));
+        const sumRaw = rawWidths.reduce((a, b) => a + b, 0) || 1;
+        colWidthsDxa = rawWidths.map(w => Math.round((w / sumRaw) * totalTableDxa));
+        const diff = totalTableDxa - colWidthsDxa.reduce((a, b) => a + b, 0);
+        colWidthsDxa[colWidthsDxa.length - 1] += diff;
+    } else {
+        const evenWidth = Math.floor(totalTableDxa / colCount);
+        colWidthsDxa = Array(colCount).fill(evenWidth);
+        colWidthsDxa[colCount - 1] += totalTableDxa - evenWidth * colCount;
+    }
+
+    const cellBorder = { style: BorderStyle.SINGLE, size: 6, color: 'CBD5E1' };
+
+    const docxRows = rows.map((tr, rowIdx) => {
+        const cells = Array.from(tr.children);
+        const isEvenBodyRow = !isFrontmatter && rowIdx > 0 && rowIdx % 2 === 1;
+
+        const docxCells = cells.map((cell, colIdx) => {
+            const isHeader = cell.tagName.toLowerCase() === 'th';
+            const isFmKey = cell.classList.contains('fm-key');
+            const cellDxa = colWidthsDxa[colIdx] || Math.floor(totalTableDxa / colCount);
+
+            let fillHex = 'FFFFFF';
+            if (isHeader || isFmKey) {
+                fillHex = 'F1F5F9';
+            } else if (isEvenBodyRow) {
+                fillHex = 'F8FAFC';
+            }
+
+            const rawAlign = (cell.getAttribute('align') || (cell.style && cell.style.textAlign) || 'left').toLowerCase().trim();
+            let alignment = AlignmentType.LEFT;
+            if (rawAlign === 'center') alignment = AlignmentType.CENTER;
+            else if (rawAlign === 'right') alignment = AlignmentType.RIGHT;
+
+            // Trim boundary whitespace on cell before parsing inline runs
+            const clonedCell = cell.cloneNode(true);
+            if (clonedCell.firstChild && clonedCell.firstChild.nodeType === Node.TEXT_NODE) {
+                clonedCell.firstChild.nodeValue = clonedCell.firstChild.nodeValue.replace(/^[\s\t\n]+/, '');
+            }
+            if (clonedCell.lastChild && clonedCell.lastChild.nodeType === Node.TEXT_NODE) {
+                clonedCell.lastChild.nodeValue = clonedCell.lastChild.nodeValue.replace(/[\s\t\n]+$/, '');
+            }
+
+            // Explicit bold isolation: normal td cells have bold: false; only <th>, .fm-key, or nested <strong> are bold
+            const cellRuns = buildDocxInlineRuns(clonedCell, {
+                font: 'Arial',
+                size: 19, // 9.5pt
+                color: (isHeader || isFmKey) ? '0F172A' : '334155',
+                bold: Boolean(isHeader || isFmKey),
+                italics: false
+            }, imageMap);
+
+            return new TableCell({
+                width: { size: cellDxa, type: WidthType.DXA },
+                verticalAlign: VerticalAlign.CENTER,
+                shading: { type: ShadingType.CLEAR, color: 'auto', fill: fillHex },
+                margins: { top: 60, bottom: 60, left: 100, right: 100 },
+                borders: {
+                    top: cellBorder,
+                    bottom: cellBorder,
+                    left: cellBorder,
+                    right: cellBorder
+                },
+                children: [
+                    new Paragraph({
+                        alignment,
+                        spacing: { before: 0, after: 0, line: 260 },
+                        children: cellRuns
+                    })
+                ]
+            });
+        });
+
+        return new TableRow({
+            tableHeader: rowIdx === 0 && cells.some(c => c.tagName.toLowerCase() === 'th'),
+            children: docxCells
+        });
+    });
+
+    return new Table({
+        width: { size: totalTableDxa, type: WidthType.DXA },
+        columnWidths: colWidthsDxa,
+        rows: docxRows
+    });
+}
+
+// Build OpenXML 1x1 Alert Callout Table
+function buildDocxAlertTable(alertEl, imageMap) {
+    const { Table, TableRow, TableCell, Paragraph, TextRun, WidthType, BorderStyle, ShadingType } = window.docx;
+    const type = (alertEl.getAttribute('data-alert-type') || 'NOTE').toUpperCase();
+    let emoji = alertEl.getAttribute('data-alert-emoji') || 'ℹ️';
+    let accentHex = '2563EB';
+    let bgHex = 'EFF6FF';
+    let borderHex = 'BFDBFE';
+    let textHex = '1E3A8A';
+
+    if (type === 'TIP') {
+        accentHex = '059669'; bgHex = 'ECFDF5'; borderHex = 'A7F3D0'; textHex = '065F46'; emoji = '💡';
+    } else if (type === 'IMPORTANT') {
+        accentHex = '4F46E5'; bgHex = 'F5F3FF'; borderHex = 'DDD6FE'; textHex = '3730A3'; emoji = '🟣';
+    } else if (type === 'WARNING') {
+        accentHex = 'D97706'; bgHex = 'FFFBEB'; borderHex = 'FDE68A'; textHex = '92400E'; emoji = '⚠️';
+    } else if (type === 'CAUTION') {
+        accentHex = 'DC2626'; bgHex = 'FEF2F2'; borderHex = 'FECACA'; textHex = '991B1B'; emoji = '🛑';
+    }
+
+    const cellChildren = [
+        new Paragraph({
+            spacing: { before: 0, after: 60, line: 260 },
+            children: [
+                new TextRun({
+                    text: `${emoji} ${type}`,
+                    font: 'Arial',
+                    size: 20, // 10pt
+                    bold: true,
+                    color: accentHex
+                })
+            ]
+        })
+    ];
+
+    const bodyEl = alertEl.querySelector('.alert-body') || alertEl;
+    const pEls = Array.from(bodyEl.querySelectorAll('p'));
+    if (pEls.length > 0) {
+        pEls.forEach((p, idx) => {
+            const isLast = idx === pEls.length - 1;
+            const runs = buildDocxInlineRuns(p, {
+                font: 'Arial',
+                size: 20, // 10pt
+                color: textHex,
+                bold: false
+            }, imageMap);
+            cellChildren.push(new Paragraph({
+                spacing: { before: 0, after: isLast ? 0 : 60, line: 276 },
+                children: runs
+            }));
+        });
+    } else {
+        const runs = buildDocxInlineRuns(bodyEl, {
+            font: 'Arial',
+            size: 20,
+            color: textHex,
+            bold: false
+        }, imageMap);
+        cellChildren.push(new Paragraph({
+            spacing: { before: 0, after: 0, line: 276 },
+            children: runs
+        }));
+    }
+
+    const thinBorder = { style: BorderStyle.SINGLE, size: 6, color: borderHex };
+    const thickLeftBorder = { style: BorderStyle.SINGLE, size: 24, color: accentHex };
+
+    return new Table({
+        width: { size: 10080, type: WidthType.DXA },
+        columnWidths: [10080],
+        rows: [
+            new TableRow({
+                children: [
+                    new TableCell({
+                        width: { size: 10080, type: WidthType.DXA },
+                        shading: { type: ShadingType.CLEAR, color: 'auto', fill: bgHex },
+                        margins: { top: 120, bottom: 120, left: 180, right: 160 },
+                        borders: {
+                            top: thinBorder,
+                            right: thinBorder,
+                            bottom: thinBorder,
+                            left: thickLeftBorder
+                        },
+                        children: cellChildren
+                    })
+                ]
+            })
+        ]
+    });
+}
+
+// Build OpenXML List Items (handling nested <pre> code blocks and sub-lists with exact indentation alignment)
+function buildDocxListBlocks(listNode, level, imageMap) {
+    const { Paragraph, TextRun } = window.docx;
+    const isOrdered = listNode.tagName.toLowerCase() === 'ol';
+    const startAttr = parseInt(listNode.getAttribute('start') || '1', 10);
+    let itemCounter = isNaN(startAttr) ? 1 : startAttr;
+
+    const blocks = [];
+    const indentLeftDxa = (level + 1) * 360;
+    const hangingDxa = 240;
+
+    Array.from(listNode.children).forEach(li => {
+        if (li.tagName.toLowerCase() !== 'li') return;
+
+        const bulletChars = ['•', '◦', '▪'];
+        const prefixText = isOrdered ? `${itemCounter}. ` : `${bulletChars[level % bulletChars.length]} `;
+        itemCounter++;
+
+        let pendingInlineContainer = document.createElement('span');
+        let hasEmittedFirstParagraph = false;
+
+        const flushInlineParagraph = () => {
+            if (!pendingInlineContainer.hasChildNodes()) return;
+            // Unwrap any <p> inside pendingInlineContainer
+            pendingInlineContainer.querySelectorAll('p').forEach(p => {
+                const parent = p.parentNode;
+                while (p.firstChild) parent.insertBefore(p.firstChild, p);
+                parent.removeChild(p);
+            });
+
+            if (pendingInlineContainer.firstChild && pendingInlineContainer.firstChild.nodeType === Node.TEXT_NODE) {
+                pendingInlineContainer.firstChild.nodeValue = pendingInlineContainer.firstChild.nodeValue.replace(/^[\s\t\n]+/, '');
+            }
+            if (pendingInlineContainer.lastChild && pendingInlineContainer.lastChild.nodeType === Node.TEXT_NODE) {
+                pendingInlineContainer.lastChild.nodeValue = pendingInlineContainer.lastChild.nodeValue.replace(/[\s\t\n]+$/, '');
+            }
+
+            const itemRuns = buildDocxInlineRuns(pendingInlineContainer, {
+                font: 'Arial',
+                size: 21, // 10.5pt
+                color: '334155',
+                bold: false
+            }, imageMap);
+
+            if (itemRuns.length > 0) {
+                const prefixRun = !hasEmittedFirstParagraph
+                    ? [new TextRun({ text: prefixText, font: 'Arial', size: 21, color: '334155', bold: isOrdered })]
+                    : [];
+                blocks.push(new Paragraph({
+                    indent: !hasEmittedFirstParagraph
+                        ? { left: indentLeftDxa, hanging: hangingDxa }
+                        : { left: indentLeftDxa },
+                    spacing: { before: 20, after: 60, line: 280 },
+                    children: [...prefixRun, ...itemRuns]
+                }));
+                hasEmittedFirstParagraph = true;
+            }
+            pendingInlineContainer = document.createElement('span');
+        };
+
+        Array.from(li.childNodes).forEach(child => {
+            if (child.nodeType === Node.ELEMENT_NODE) {
+                const childTag = child.tagName.toLowerCase();
+                if (childTag === 'pre') {
+                    flushInlineParagraph();
+                    blocks.push(buildDocxCodeBlockTable(child, indentLeftDxa));
+                    blocks.push(new Paragraph({ spacing: { before: 0, after: 40 }, children: [] }));
+                    return;
+                }
+                if (childTag === 'ul' || childTag === 'ol') {
+                    flushInlineParagraph();
+                    blocks.push(...buildDocxListBlocks(child, level + 1, imageMap));
+                    return;
+                }
+            }
+            pendingInlineContainer.appendChild(child.cloneNode(true));
+        });
+
+        flushInlineParagraph();
+    });
+
+    return blocks;
+}
+
+// Core Command: Export to Native Microsoft Word (.docx)
+if (docxBtn) {
+    docxBtn.addEventListener('click', async () => {
+        if (!window.docx) {
+            showToast('Library Error', 'Word (.docx) generator library is still loading. Please try again.', false);
+            return;
+        }
+
+        docxBtn.disabled = true;
+        docxBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Building .docx...';
+
+        try {
+            const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, BorderStyle } = window.docx;
+
+            // 1. Pre-rasterize all Mermaid diagrams and MathJax formulas to 3x PNG byte arrays
+            const imageMap = new Map();
+
+            const mermaidContainers = previewContent.querySelectorAll('.mermaid-diagram-container');
+            for (const container of mermaidContainers) {
+                const id = container.getAttribute('data-id');
+                const svgEl = container.querySelector('svg');
+                if (id && svgEl) {
+                    try {
+                        const { pngDataUrl, width, height } = await svgToPng(svgEl);
+                        const maxW = 600;
+                        const scale = width > maxW ? (maxW / width) : 1;
+                        imageMap.set(id, {
+                            uint8Array: dataUrlToUint8Array(pngDataUrl),
+                            width: Math.round(width * scale),
+                            height: Math.round(height * scale)
+                        });
+                    } catch (err) {
+                        console.error('Mermaid DOCX rasterize error:', err);
+                    }
+                }
+            }
+
+            const mathBlockContainers = previewContent.querySelectorAll('.math-block-container');
+            for (const container of mathBlockContainers) {
+                const id = container.getAttribute('data-id');
+                const svgEl = container.querySelector('svg');
+                if (id && svgEl) {
+                    try {
+                        const { pngDataUrl, width, height } = await svgToPng(svgEl, { transparent: false });
+                        const maxW = 580;
+                        const scale = width > maxW ? (maxW / width) : 1;
+                        imageMap.set(id, {
+                            uint8Array: dataUrlToUint8Array(pngDataUrl),
+                            width: Math.round(width * scale),
+                            height: Math.round(height * scale)
+                        });
+                    } catch (err) {
+                        console.error('Math block DOCX rasterize error:', err);
+                    }
+                }
+            }
+
+            const mathInlineContainers = previewContent.querySelectorAll('.math-inline-container');
+            for (const container of mathInlineContainers) {
+                const id = container.getAttribute('data-id');
+                const svgEl = container.querySelector('svg');
+                if (id && svgEl) {
+                    try {
+                        const { pngDataUrl, width, height } = await svgToPng(svgEl, { transparent: true, isInline: true });
+                        imageMap.set(id, {
+                            uint8Array: dataUrlToUint8Array(pngDataUrl),
+                            width,
+                            height
+                        });
+                    } catch (err) {
+                        console.error('Math inline DOCX rasterize error:', err);
+                    }
+                }
+            }
+
+            // 2. Walk top-level children of previewContent and build OpenXML AST
+            const docChildren = [];
+            const liveTables = Array.from(previewContent.querySelectorAll('table'));
+            let tableCursor = 0;
+
+            const topNodes = Array.from(previewContent.children);
+            for (const el of topNodes) {
+                const tag = el.tagName.toLowerCase();
+
+                // YAML Frontmatter Card
+                if (el.classList.contains('frontmatter-card')) {
+                    const fmTable = el.querySelector('.frontmatter-table');
+                    const liveFmTable = liveTables[tableCursor];
+                    if (fmTable) {
+                        tableCursor++;
+                        const tbl = buildDocxDataTable(fmTable, liveFmTable, imageMap);
+                        if (tbl) {
+                            docChildren.push(tbl);
+                            docChildren.push(new Paragraph({ spacing: { before: 0, after: 120 }, children: [] }));
+                        }
+                    }
+                    continue;
+                }
+
+                // Headings H1 - H4
+                if (['h1', 'h2', 'h3', 'h4'].includes(tag)) {
+                    const sizeMap = { h1: 44, h2: 32, h3: 26, h4: 23 }; // 22pt, 16pt, 13pt, 11.5pt
+                    const headingMap = {
+                        h1: HeadingLevel.HEADING_1,
+                        h2: HeadingLevel.HEADING_2,
+                        h3: HeadingLevel.HEADING_3,
+                        h4: HeadingLevel.HEADING_4
+                    };
+                    const clonedHeading = el.cloneNode(true);
+                    if (clonedHeading.firstChild && clonedHeading.firstChild.nodeType === Node.TEXT_NODE) {
+                        clonedHeading.firstChild.nodeValue = clonedHeading.firstChild.nodeValue.replace(/^[\s\t\n]+/, '');
+                    }
+                    if (clonedHeading.lastChild && clonedHeading.lastChild.nodeType === Node.TEXT_NODE) {
+                        clonedHeading.lastChild.nodeValue = clonedHeading.lastChild.nodeValue.replace(/[\s\t\n]+$/, '');
+                    }
+
+                    const runs = buildDocxInlineRuns(clonedHeading, {
+                        font: 'Arial',
+                        size: sizeMap[tag],
+                        color: (tag === 'h1' || tag === 'h2') ? '0F172A' : '1E293B',
+                        bold: true
+                    }, imageMap);
+
+                    docChildren.push(new Paragraph({
+                        heading: headingMap[tag],
+                        spacing: {
+                            before: tag === 'h1' ? 280 : (tag === 'h2' ? 240 : 180),
+                            after: tag === 'h1' ? 120 : 100
+                        },
+                        border: (tag === 'h1' || tag === 'h2') ? {
+                            bottom: {
+                                style: BorderStyle.SINGLE,
+                                size: tag === 'h1' ? 12 : 6,
+                                color: 'E2E8F0',
+                                space: 4
+                            }
+                        } : undefined,
+                        children: runs
+                    }));
+                    continue;
+                }
+
+                // Horizontal Rule (<hr>)
+                if (tag === 'hr') {
+                    docChildren.push(new Paragraph({
+                        spacing: { before: 120, after: 120 },
+                        border: {
+                            bottom: { style: BorderStyle.SINGLE, size: 6, color: 'E2E8F0', space: 1 }
+                        },
+                        children: []
+                    }));
+                    continue;
+                }
+
+                // Mermaid Diagram Container
+                if (el.classList.contains('mermaid-diagram-container')) {
+                    const id = el.getAttribute('data-id');
+                    const imgData = imageMap.get(id);
+                    if (imgData) {
+                        docChildren.push(new Paragraph({
+                            alignment: AlignmentType.CENTER,
+                            spacing: { before: 160, after: 160 },
+                            children: [
+                                new ImageRun({
+                                    data: imgData.uint8Array,
+                                    transformation: {
+                                        width: imgData.width,
+                                        height: imgData.height
+                                    }
+                                })
+                            ]
+                        }));
+                    }
+                    continue;
+                }
+
+                // MathJax Block Formula Container
+                if (el.classList.contains('math-block-container')) {
+                    const id = el.getAttribute('data-id');
+                    const imgData = imageMap.get(id);
+                    if (imgData) {
+                        docChildren.push(new Paragraph({
+                            alignment: AlignmentType.CENTER,
+                            spacing: { before: 140, after: 140 },
+                            children: [
+                                new ImageRun({
+                                    data: imgData.uint8Array,
+                                    transformation: {
+                                        width: imgData.width,
+                                        height: imgData.height
+                                    }
+                                })
+                            ]
+                        }));
+                    }
+                    continue;
+                }
+
+                // GitHub Alert Callout Block
+                if (el.classList.contains('alert-block')) {
+                    docChildren.push(buildDocxAlertTable(el, imageMap));
+                    docChildren.push(new Paragraph({ spacing: { before: 0, after: 100 }, children: [] }));
+                    continue;
+                }
+
+                // Top-Level Code Block (<pre>)
+                if (tag === 'pre') {
+                    if (el.classList.contains('mermaid-code-raw') || el.classList.contains('math-code-raw')) continue;
+                    docChildren.push(buildDocxCodeBlockTable(el, 0));
+                    docChildren.push(new Paragraph({ spacing: { before: 0, after: 100 }, children: [] }));
+                    continue;
+                }
+
+                // Data Table (<table>)
+                if (tag === 'table') {
+                    const liveTable = liveTables[tableCursor];
+                    tableCursor++;
+                    const tbl = buildDocxDataTable(el, liveTable, imageMap);
+                    if (tbl) {
+                        docChildren.push(tbl);
+                        docChildren.push(new Paragraph({ spacing: { before: 0, after: 120 }, children: [] }));
+                    }
+                    continue;
+                }
+
+                // Unordered & Ordered Lists (<ul>, <ol>)
+                if (tag === 'ul' || tag === 'ol') {
+                    const listBlocks = buildDocxListBlocks(el, 0, imageMap);
+                    docChildren.push(...listBlocks);
+                    continue;
+                }
+
+                // Standard Blockquote (<blockquote>)
+                if (tag === 'blockquote') {
+                    const runs = buildDocxInlineRuns(el, {
+                        font: 'Arial',
+                        size: 21, // 10.5pt
+                        color: '475569',
+                        bold: false,
+                        italics: true
+                    }, imageMap);
+                    docChildren.push(new Paragraph({
+                        indent: { left: 360 },
+                        spacing: { before: 100, after: 120, line: 280 },
+                        border: {
+                            left: { style: BorderStyle.SINGLE, size: 18, color: 'CBD5E1', space: 8 }
+                        },
+                        children: runs
+                    }));
+                    continue;
+                }
+
+                // Standard Paragraph (<p> or fallback block)
+                const clonedBlock = el.cloneNode(true);
+                if (clonedBlock.firstChild && clonedBlock.firstChild.nodeType === Node.TEXT_NODE) {
+                    clonedBlock.firstChild.nodeValue = clonedBlock.firstChild.nodeValue.replace(/^[\s\t\n]+/, '');
+                }
+                if (clonedBlock.lastChild && clonedBlock.lastChild.nodeType === Node.TEXT_NODE) {
+                    clonedBlock.lastChild.nodeValue = clonedBlock.lastChild.nodeValue.replace(/[\s\t\n]+$/, '');
+                }
+                const pRuns = buildDocxInlineRuns(clonedBlock, {
+                    font: 'Arial',
+                    size: 21, // 10.5pt
+                    color: '334155',
+                    bold: false
+                }, imageMap);
+
+                if (pRuns.length > 0) {
+                    docChildren.push(new Paragraph({
+                        spacing: { before: 0, after: 140, line: 290 },
+                        children: pRuns
+                    }));
+                }
+            }
+
+            // 3. Assemble OpenXML Document with 0.75-inch margins
+            const doc = new Document({
+                sections: [
+                    {
+                        properties: {
+                            page: {
+                                margin: {
+                                    top: 1080,
+                                    right: 1080,
+                                    bottom: 1080,
+                                    left: 1080
+                                }
+                            }
+                        },
+                        children: docChildren
+                    }
+                ]
+            });
+
+            const blob = await Packer.toBlob(doc);
+            const rawMd = markdownInput.value || '';
+            const h1Match = rawMd.match(/^#\s+(.+)$/m);
+            const slug = h1Match
+                ? h1Match[1].replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase().slice(0, 50)
+                : 'document';
+            const filename = `${slug || 'document'}.docx`;
+
+            if (typeof window.saveAs === 'function') {
+                window.saveAs(blob, filename);
+            } else {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
+            showToast('Word Document Downloaded!', `Saved "${filename}" successfully.`);
+        } catch (err) {
+            console.error('DOCX generation error:', err);
+            showToast('Export Failed', 'Could not generate Word (.docx) file.', false);
+        } finally {
+            docxBtn.disabled = false;
+            docxBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download Word';
+        }
+    });
+}
 
 // Handle Download PDF (triggers browser print interface with styled media query layout)
 pdfBtn.addEventListener('click', () => {

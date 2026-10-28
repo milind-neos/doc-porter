@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="style.css?v=2.0">
+    <link rel="stylesheet" href="style.css?v=2.2">
     <!-- marked for markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- mermaid for diagram rendering -->
@@ -16,6 +16,9 @@
     <!-- highlight.js for premium code syntax highlighting -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- docx (OpenXML) and FileSaver for native .docx export -->
+    <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <!-- MathJax for LaTeX / Math formula rendering -->
     <script>
         window.MathJax = {
@@ -63,6 +66,9 @@
                 </button>
                 <button id="load-sample" class="btn btn-secondary">
                     <i class="fa-solid fa-file-lines"></i> Load Sample
+                </button>
+                <button id="docx-btn" class="btn btn-secondary" title="Download as Microsoft Word (.docx)">
+                    <i class="fa-solid fa-file-word"></i> Download Word
                 </button>
                 <button id="pdf-btn" class="btn btn-secondary" title="Download as PDF">
                     <i class="fa-solid fa-file-pdf"></i> Download PDF
@@ -149,6 +155,6 @@ graph TD
         </div>
     </div>
 
-    <script src="app.js?v=2.1"></script>
+    <script src="app.js?v=2.2"></script>
 </body>
 </html>

@@ -188,6 +188,15 @@ body {
     background: rgba(255, 255, 255, 0.12);
 }
 
+#docx-btn i {
+    color: #3b82f6;
+}
+
+#docx-btn:hover {
+    border-color: rgba(59, 130, 246, 0.4);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.18);
+}
+
 .btn-danger {
     background: rgba(239, 68, 68, 0.1);
     color: #fca5a5;
